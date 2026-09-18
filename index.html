@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Home IoT Dashboard</title>
+    <style>
+        :root {
+            --bg-color: #f4f7f6;
+            --card-bg: #ffffff;
+            --primary: #4CAF50;
+            --danger: #f44336;
+            --text-main: #333;
+            --text-muted: #777;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 { margin-bottom: 5px; }
+        .subtitle { color: var(--text-muted); margin-bottom: 20px; }
+        
+        #connectBtn {
+            background-color: #2196F3;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: 0.3s;
+        }
+        #connectBtn:hover { background-color: #1976D2; }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            width: 100%;
+            max-width: 1000px;
+        }
+        .card {
+            background: var(--card-bg);
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+            text-align: center;
+            border-top: 5px solid var(--primary);
+        }
+        .card.alert { border-top-color: var(--danger); animation: blink 1s infinite; }
+        .card h2 { font-size: 18px; color: var(--text-muted); margin-top: 0; }
+        .value { font-size: 32px; font-weight: bold; margin: 15px 0; }
+        
+        .btn-group { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
+        button.cmd-btn {
+            padding: 8px 15px;
+            border: none;
+            border-radius: 6px;
+            background-color: #e0e0e0;
+            cursor: pointer;
+            font-weight: bold;
+            transition: 0.2s;
+        }
+        button.cmd-btn:hover { background-color: #d5d5d5; }
+        button.cmd-btn.active { background-color: var(--primary); color: white; }
+        button.cmd-btn.danger { background-color: var(--danger); color: white; }
+
+        @keyframes blink {
+            50% { box-shadow: 0 0 15px var(--danger); }
+        }
+        #statusConsole {
+            margin-top: 30px;
+            padding: 10px;
+            background: #222;
+            color: #0f0;
+            width: 100%;
+            max-width: 1000px;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Smart Home Control Panel</h1>
+    <div class="subtitle">Giao diện điều khiển và Giám sát thời gian thực</div>
+
+    <button id="connectBtn">🔌 Kết nối Arduino (Cổng COM)</button>
+
+    <div class="dashboard">
+        <!-- Card Nhiệt độ -->
+        <div class="card" id="cardTemp">
+            <h2>🌡️ Nhiệt độ phòng</h2>
+            <div class="value" id="valTemp">-- °C</div>
+        </div>
+
+        <!-- Card Ánh sáng -->
+        <div class="card">
+            <h2>☀️ Ánh sáng (Quang trở)</h2>
+            <div class="value" id="valLight">-- %</div>
+            <div class="btn-group">
+                <button class="cmd-btn" id="btnLightAuto" onclick="sendCmd('LIGHT_AUTO')">AUTO</button>
+                <button class="cmd-btn" id="btnLightOn" onclick="sendCmd('LIGHT_ON')">BẬT (ON)</button>
+                <button class="cmd-btn" id="btnLightOff" onclick="sendCmd('LIGHT_OFF')">TẮT (OFF)</button>
+            </div>
+            <div style="margin-top: 10px; font-size: 14px; color: #777;">Trạng thái đèn LED: <span id="valLightLed">--</span></div>
+        </div>
+
+        <!-- Card Cửa chính -->
+        <div class="card">
+            <h2>🚪 Cửa chính (Servo)</h2>
+            <div class="value" id="valDoor">--</div>
+            <div class="btn-group">
+                <button class="cmd-btn" id="btnDoorOpen" onclick="sendCmd('DOOR_OPEN')">MỞ CỬA</button>
+                <button class="cmd-btn" id="btnDoorClose" onclick="sendCmd('DOOR_CLOSE')">KHÓA CỬA</button>
+            </div>
+        </div>
+
+        <!-- Card An ninh -->
+        <div class="card" id="cardSecurity">
+            <h2>🛡️ Hệ thống An ninh</h2>
+            <div class="value" id="valSecurity">--</div>
+            <div style="font-size: 14px; margin-bottom: 15px;">Cảm biến quét: <span id="valDist">--</span> cm</div>
+            <div class="btn-group">
+                <button class="cmd-btn danger" id="btnAlarmArm" onclick="sendCmd('ALARM_ARM')">BẬT CHỐNG TRỘM</button>
+                <button class="cmd-btn" id="btnAlarmDisarm" onclick="sendCmd('ALARM_DISARM')">TẮT AN NINH</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="statusConsole">Trạng thái: Đang chờ kết nối...</div>
+
+    <script>
+        let port;
+        let writer;
+        const connectBtn = document.getElementById('connectBtn');
+        const consoleLog = document.getElementById('statusConsole');
+
+        // Hàm xử lý kết nối Web Serial
+        connectBtn.addEventListener('click', async () => {
+            try {
+                // Yêu cầu người dùng chọn cổng COM
+                port = await navigator.serial.requestPort();
+                await port.open({ baudRate: 9600 });
+                
+                connectBtn.innerText = "✔️ Đã kết nối Arduino";
+                connectBtn.style.backgroundColor = "#4CAF50";
+                consoleLog.innerText = "Trạng thái: Bắt đầu nhận dữ liệu...";
+
+                // Thiết lập luồng gửi lệnh
+                const textEncoder = new TextEncoderStream();
+                const writableStreamClosed = textEncoder.readable.pipeTo(port.writable);
+                writer = textEncoder.writable.getWriter();
+
+                // Thiết lập luồng đọc dữ liệu
+                const textDecoder = new TextDecoderStream();
+                const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
+                const reader = textDecoder.readable.getReader();
+
+                let buffer = ""; // Bộ đệm chứa chuỗi JSON chưa hoàn chỉnh
+
+                // Vòng lặp đọc dữ liệu liên tục
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    
+                    buffer += value;
+                    let lines = buffer.split('\n');
+                    
+                    // Giữ lại phần cuối cùng chưa hoàn chỉnh trong buffer
+                    buffer = lines.pop(); 
+
+                    for (let line of lines) {
+                        line = line.trim();
+                        if (line.startsWith("{") && line.endsWith("}")) {
+                            updateDashboard(JSON.parse(line));
+                        }
+                    }
+                }
+            } catch (error) {
+                consoleLog.innerText = "Lỗi kết nối: " + error;
+            }
+        });
+
+        // Hàm gửi lệnh xuống Arduino
+        async function sendCmd(command) {
+            if (writer) {
+                await writer.write(command + '\n');
+                consoleLog.innerText = "Đã gửi lệnh: " + command;
+            } else {
+                alert("Vui lòng kết nối Arduino trước!");
+            }
+        }
+
+        // Hàm cập nhật Giao diện dựa trên dữ liệu JSON
+        function updateDashboard(data) {
+            // Cập nhật Nhiệt độ
+            document.getElementById('valTemp').innerText = data.temp + " °C";
+            if (data.temp > 50) document.getElementById('cardTemp').classList.add('alert');
+            else document.getElementById('cardTemp').classList.remove('alert');
+
+            // Cập nhật Ánh sáng
+            document.getElementById('valLight').innerText = data.light + " %";
+            document.getElementById('valLightLed').innerText = data.light_led ? "ĐANG SÁNG" : "ĐÃ TẮT";
+            
+            // Đổi màu nút chế độ đèn
+            document.getElementById('btnLightAuto').className = "cmd-btn " + (data.light_mode === 2 ? "active" : "");
+            document.getElementById('btnLightOn').className = "cmd-btn " + (data.light_mode === 1 ? "active" : "");
+            document.getElementById('btnLightOff').className = "cmd-btn " + (data.light_mode === 0 ? "active" : "");
+
+            // Cập nhật Cửa
+            document.getElementById('valDoor').innerText = data.door ? "ĐANG MỞ" : "ĐÃ KHÓA";
+            document.getElementById('valDoor').style.color = data.door ? "#4CAF50" : "#f44336";
+
+            // Cập nhật An ninh
+            document.getElementById('valDist').innerText = data.dist;
+            document.getElementById('valSecurity').innerText = data.alarm ? "ĐANG BẢO VỆ" : "ĐÃ TẮT";
+            
+            // Xử lý báo động đỏ (Trộm hoặc Cháy)
+            if (data.alert) {
+                document.getElementById('cardSecurity').classList.add('alert');
+                document.getElementById('valSecurity').innerText = "🚨 CÓ XÂM NHẬP!";
+                document.getElementById('valSecurity').style.color = "#f44336";
+            } else {
+                document.getElementById('cardSecurity').classList.remove('alert');
+                document.getElementById('valSecurity').style.color = data.alarm ? "#4CAF50" : "#777";
+            }
+        }
+    </script>
+</body>
+</html>
